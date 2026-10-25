@@ -43,11 +43,11 @@ Commits: 1, 1 co-authored by an AI, 0 of them say why.
 Worth a second look (answer with: decide why <id> "..." --rejected "..."):
   D-0002  Retry webhooks 5x  (taken, by ai): why this, and what else was possible?
 
-AI co-authored commits with no Why: line:
+AI co-authored commits that do not say why:
   - retries
 ```
 
-It also reads `git log`: commits with an AI co-author trailer (Claude, Copilot, Cursor, Codex, Gemini, Aider…) and whether they carry a `Why:` line (or `Decision: D-000N`). An optional commit-msg hook reminds you, gently, when one doesn't. `--strict` makes the reminder a refusal.
+It also reads `git log`: commits with an AI co-author trailer (Claude, Copilot, Cursor, Codex, Gemini, Aider…) and whether they say why: a `Why:` line (or `Decision: D-000N`), or a body that gives the reason in a sentence or two (at least 15 words besides the subject, lists and trailers, with a word of cause in them: because, so, instead, found, measured...). A body that only says *what* changed does not count. Measured on a real repo whose commits explain themselves in prose: 0 of 33 "said why" while only a `Why:` line counted; now 27 of 33, and the other 6 describe what, not why. An optional commit-msg hook reminds you, gently, when one doesn't. `--strict` makes the reminder a refusal.
 
 Standard library only, Python 3.8+. The log is Markdown: it reads fine on GitHub, and you can edit it by hand.
 

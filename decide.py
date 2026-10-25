@@ -16,7 +16,7 @@ import sys
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 DEFAULT_FILE = "DECISIONS.md"
 HEAD = re.compile(r"^## (D-\d+) · (\d{4}-\d{2}-\d{2}) · (.+?)\s*$")
 FIELD = re.compile(r"^- (by|why|rejected|commit):\s*(.*?)\s*$")
@@ -24,6 +24,24 @@ AI_TRAILER = re.compile(
     r"^co-authored-by:.*\b(claude|anthropic|copilot|cursor|codex|openai|gpt|gemini|devin|aider|windsurf|cody)\b"
     r"|generated with \[?(claude code|cursor|copilot)", re.I | re.M)
 WHY_TRAILER = re.compile(r"^(why|decision):\s*\S", re.I | re.M)
+TRAILER_LINE = re.compile(r"^[A-Za-z][\w-]*:\s*\S")            # Co-Authored-By: ..., Signed-off-by: ..., Claude-Session: ...
+LIST_LINE = re.compile(r"^\s*([-*+]|\d+[.)])\s")
+REASON_WORD = re.compile(
+    r"\b(because|so|since|therefore|instead|otherwise|to avoid|in order|found|was|were|used to|after|before|why|"
+    r"broke|failed|caused|reason|measured|fixed|now)\b|потому|поэтому|чтобы|иначе|из-за|раньше|теперь|вместо|был[аио]?\b|нашл|сломал",
+    re.I)
+
+
+def says_why(msg):
+    """A commit says why when it has a `Why:` / `Decision:` line, or a body that gives a reason in prose: at least
+    15 words besides the subject, list items and trailers, with a word of cause in them. (A real repo of reasoned
+    commit bodies read as 33 of 33 commits 'saying nothing' while only a Why: line counted.)"""
+    if WHY_TRAILER.search(msg):
+        return True
+    lines = msg.strip().splitlines()[1:]
+    prose = [l for l in lines if l.strip() and not TRAILER_LINE.match(l.strip()) and not LIST_LINE.match(l)]
+    text = " ".join(prose)
+    return len(re.findall(r"\w+", text)) >= 15 and bool(REASON_WORD.search(text))
 KINDS = {
     "yours": "a reason and the options you turned down",
     "half": "a reason, no alternatives weighed",
@@ -83,11 +101,11 @@ def _read(path):
         return f.read()
 
 
-def add(path, title, why="", rejected=(), by="me", commit=""):
+def add(path, title, why="", rejected=(), by="me", commit="", on=None):
     text = _read(path)
     ds = parse(text)
     n = max((int(d.id[2:]) for d in ds), default=0) + 1
-    d = Decision(f"D-{n:04d}", date.today().isoformat(), title.strip(), by, why.strip(),
+    d = Decision(f"D-{n:04d}", (on or date.today()).isoformat(), title.strip(), by, why.strip(),
                  [r.strip() for r in rejected if r.strip()], commit)
     if not text.strip():
         text = "# Decisions\n\nOne entry per decision: what, why, and what was turned down.\n"
@@ -138,7 +156,7 @@ def git_stats(root, since, until=None):
         subject, _, body = c.partition("\x1f")
         if AI_TRAILER.search(body):
             ai += 1
-            if WHY_TRAILER.search(body):
+            if says_why(body):
                 with_why += 1
             else:
                 without.append(subject)
@@ -160,7 +178,7 @@ def print_review(r, g, since, until):
                  else "what did you turn down, and why?")
             print(f"  {d.id}  {d.title}  ({d.kind}, by {d.by or '?'}): {q}")
     if g and g["ai_without_why"]:
-        print("\nAI co-authored commits with no Why: line:")
+        print("\nAI co-authored commits that do not say why:")
         for s in g["ai_without_why"][:15]:
             print(f"  - {s}")
 
@@ -170,9 +188,10 @@ def print_review(r, g, since, until):
 def check_message(path, strict=False):
     with open(path, encoding="utf-8", errors="replace") as f:
         msg = "\n".join(l for l in f.read().splitlines() if not l.startswith("#"))
-    if AI_TRAILER.search(msg) and not WHY_TRAILER.search(msg):
+    if AI_TRAILER.search(msg) and not says_why(msg):
         print("decide: this commit is co-authored by an AI and does not say why.\n"
-              "        Add a line `Why: <your reason>` (or `Decision: D-000N`) to the message.",
+              "        Say it in the body (a sentence or two on the reason), or add a line `Why: <your reason>`\n"
+              "        (or `Decision: D-000N`).",
               file=sys.stderr)
         return 1 if strict else 0
     return 0
@@ -215,6 +234,7 @@ def main(argv=None):
     a.add_argument("-r", "--rejected", action="append", default=[], help="an option you turned down (repeat)")
     a.add_argument("-b", "--by", default="me", help="me / ai / together / a name")
     a.add_argument("-c", "--commit", default="")
+    a.add_argument("-d", "--date", type=_day, default=None, help="YYYY-MM-DD, for a decision taken earlier (default: today)")
 
     w = sub.add_parser("why", help="add the reason to a decision later")
     w.add_argument("id")
@@ -239,7 +259,7 @@ def main(argv=None):
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
     if o.cmd == "add":
-        d = add(o.file, o.title, o.why, o.rejected, o.by, o.commit)
+        d = add(o.file, o.title, o.why, o.rejected, o.by, o.commit, on=o.date)
         print(f"{d.id} recorded ({d.kind}) in {o.file}")
         if d.kind != "yours":
             print("  Tip: a decision is yours when it has a reason (--why) and the options you turned down (--rejected).")
